@@ -13,7 +13,7 @@ router.get('/', async (req: Request, res: Response) => {
 
   try {
     const data = await getMessages(limit, offset);
-    res.json({ data, limit, offset });
+    res.json({ data: data.reverse(), limit, offset });
   } catch {
     res.status(500).json({ error: 'Failed to fetch messages' });
   }

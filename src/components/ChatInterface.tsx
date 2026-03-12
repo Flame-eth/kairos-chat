@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { useRouter } from "next/navigation"
 import { useUser } from "@/context/UserContext"
 import { useSocket } from "@/hooks/useSocket"
@@ -8,71 +9,115 @@ import { fetchMessages } from "@/lib/api"
 import { MessageBubble } from "@/components/MessageBubble"
 import { MessageInput } from "@/components/MessageInput"
 import { ConnectionStatus } from "@/components/ConnectionStatus"
-import { ScrollArea } from "@/components/ui/scroll-area"
+import { TypingBubble } from "@/components/TypingBubble"
 import { Button } from "@/components/ui/button"
-import { LogOut, MessageCircle } from "lucide-react"
+import { LogOut, MessageCircle, ArrowDown } from "lucide-react"
 import { Message } from "@/types"
 
-const PAGE_SIZE = 50
+const PAGE_SIZE = 10
 
 export function ChatInterface() {
   const { username, logout } = useUser()
   const router = useRouter()
 
-  const [messages, setMessages] = useState<Message[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [offset, setOffset] = useState(0)
+  const [socketMessages, setSocketMessages] = useState<Message[]>([])
+  const [olderMessages, setOlderMessages] = useState<Message[]>([])
+  const [nextOffset, setNextOffset] = useState(PAGE_SIZE)
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [typingUsers, setTypingUsers] = useState<string[]>([])
+  const [showScrollButton, setShowScrollButton] = useState(false)
 
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const isAtBottomRef = useRef(true)
 
   const {
     connected,
     error: socketError,
     sendMessage,
+    sendTyping,
   } = useSocket({
     onMessage: (msg) => {
-      setMessages((prev) => {
-        // Deduplicate by id (in case REST and socket race)
+      setSocketMessages((prev) => {
         if (prev.some((m) => m.id === msg.id)) return prev
         return [...prev, msg]
       })
     },
+    onTyping: (sender, isTyping) => {
+      setTypingUsers((prev) =>
+        isTyping
+          ? [...new Set([...prev, sender])]
+          : prev.filter((s) => s !== sender)
+      )
+    },
   })
 
-  // Initial history load
-  useEffect(() => {
-    if (!username) return
-    fetchMessages(PAGE_SIZE, 0)
-      .then(({ data }) => {
-        setMessages(data)
-        setOffset(data.length)
-        setHasMore(data.length === PAGE_SIZE)
-      })
-      .catch(() => setLoadError("Failed to load messages"))
-      .finally(() => setLoading(false))
-  }, [username])
+  const {
+    data: initialData,
+    isLoading,
+    isError,
+  } = useQuery({
+    queryKey: ["messages", { limit: PAGE_SIZE, offset: 0 }],
+    queryFn: () => fetchMessages(PAGE_SIZE, 0),
+    staleTime: Infinity,
+    enabled: !!username,
+  })
 
-  // Auto-scroll to bottom on new messages
+  const allMessages = useMemo(() => {
+    const historic = [...olderMessages, ...(initialData?.data ?? [])]
+    const historicIds = new Set(historic.map((m) => m.id))
+    return [
+      ...historic,
+      ...socketMessages.filter((m) => !historicIds.has(m.id)),
+    ]
+  }, [olderMessages, initialData, socketMessages])
+
+  const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior })
+  }
+
+  const handleScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+    isAtBottomRef.current = atBottom
+    setShowScrollButton(!atBottom)
+  }
+
+  // Scroll to bottom instantly when initial history loads
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
+    if (initialData) scrollToBottom("instant")
+  }, [initialData])
+
+  // Auto-scroll on new socket messages:
+  useEffect(() => {
+    if (socketMessages.length === 0) return
+
+    requestAnimationFrame(() => scrollToBottom())
+  }, [socketMessages, username])
+
+  // Auto-scroll typing bubbles if already at the bottom
+  useEffect(() => {
+    if (typingUsers.length > 0 && isAtBottomRef.current) {
+      requestAnimationFrame(() => scrollToBottom())
+    }
+  }, [typingUsers])
 
   const loadOlderMessages = async () => {
     setLoadingMore(true)
     try {
-      const { data } = await fetchMessages(PAGE_SIZE, offset)
-      setMessages((prev) => {
+      const { data } = await fetchMessages(PAGE_SIZE, nextOffset)
+      setOlderMessages((prev) => {
         const existingIds = new Set(prev.map((m) => m.id))
         const fresh = data.filter((m) => !existingIds.has(m.id))
         return [...fresh, ...prev]
       })
-      setOffset((o) => o + data.length)
+      setNextOffset((o) => o + data.length)
       setHasMore(data.length === PAGE_SIZE)
     } catch {
-      // silently fail — not critical
+      // silently fail — not critical path
     } finally {
       setLoadingMore(false)
     }
@@ -83,15 +128,20 @@ export function ChatInterface() {
     sendMessage(username, text)
   }
 
+  const handleTypingChange = (isTyping: boolean) => {
+    if (!username) return
+    sendTyping(username, isTyping)
+  }
+
   const handleLogout = () => {
     logout()
     router.push("/")
   }
 
   return (
-    <div className="flex h-svh flex-col">
+    <div className="relative flex h-svh flex-col overflow-hidden">
       {/* Header */}
-      <header className="flex items-center justify-between border-b bg-background px-4 py-3">
+      <header className="flex shrink-0 items-center justify-between border-b bg-background px-4 py-3">
         <div className="flex items-center gap-2">
           <MessageCircle className="h-5 w-5 text-primary" />
           <span className="font-semibold">Kairos Chat</span>
@@ -111,10 +161,14 @@ export function ChatInterface() {
       </header>
 
       {/* Message area */}
-      <ScrollArea className="flex-1 px-4 py-2">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="min-h-0 flex-1 overflow-y-auto px-4 py-2"
+      >
         <div className="flex min-h-full flex-col gap-3">
           {/* Load older messages */}
-          {hasMore && !loading && (
+          {hasMore && !isLoading && (
             <div className="flex justify-center pt-2">
               <Button
                 variant="ghost"
@@ -129,7 +183,7 @@ export function ChatInterface() {
           )}
 
           {/* Loading skeleton */}
-          {loading && (
+          {isLoading && (
             <div
               className="flex flex-col gap-3 pt-4"
               data-testid="loading-skeleton"
@@ -144,20 +198,21 @@ export function ChatInterface() {
           )}
 
           {/* Error state */}
-          {loadError && (
+          {isError && (
             <p className="py-4 text-center text-sm text-destructive">
-              {loadError}
+              Failed to load messages. Please refresh.
             </p>
           )}
 
-          {/* Messages */}
-          {!loading && messages.length === 0 && !loadError && (
+          {/* Empty state */}
+          {!isLoading && allMessages.length === 0 && !isError && (
             <p className="py-8 text-center text-sm text-muted-foreground">
               No messages yet. Say hello!
             </p>
           )}
 
-          {messages.map((msg) => (
+          {/* Messages */}
+          {allMessages.map((msg) => (
             <MessageBubble
               key={msg.id}
               message={msg}
@@ -165,12 +220,35 @@ export function ChatInterface() {
             />
           ))}
 
-          <div ref={bottomRef} />
+          {/* Typing bubbles */}
+          {typingUsers.map((sender) => (
+            <TypingBubble key={sender} sender={sender} />
+          ))}
         </div>
-      </ScrollArea>
+      </div>
+
+      {/* Scroll to bottom button */}
+      {showScrollButton && (
+        <div className="absolute bottom-20 left-1/2 z-10 -translate-x-1/2">
+          <Button
+            size="icon"
+            variant="secondary"
+            className="rounded-full shadow-md"
+            onClick={() => scrollToBottom()}
+            aria-label="Scroll to bottom"
+            data-testid="scroll-to-bottom"
+          >
+            <ArrowDown className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       {/* Input */}
-      <MessageInput onSend={handleSend} disabled={!connected} />
+      <MessageInput
+        onSend={handleSend}
+        onTypingChange={handleTypingChange}
+        disabled={!connected}
+      />
     </div>
   )
 }

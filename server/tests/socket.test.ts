@@ -13,6 +13,7 @@ const mockCreateMessage = repo.createMessage as jest.MockedFunction<
 describe('Socket.io handlers', () => {
   let ioServer: Server;
   let clientSocket: ClientSocket;
+  let clientSocket2: ClientSocket;
   let serverPort: number;
 
   beforeAll((done) => {
@@ -24,18 +25,24 @@ describe('Socket.io handlers', () => {
       serverPort = addr.port;
 
       clientSocket = ioc(`http://localhost:${serverPort}`);
+      clientSocket2 = ioc(`http://localhost:${serverPort}`);
 
       ioServer.on('connection', (socket) => {
         registerSocketHandlers(ioServer, socket);
       });
 
-      clientSocket.on('connect', done);
+      // Wait for both clients to connect
+      let connected = 0;
+      const onConnect = () => { if (++connected === 2) done(); };
+      clientSocket.on('connect', onConnect);
+      clientSocket2.on('connect', onConnect);
     });
   });
 
   afterAll(() => {
     ioServer.close();
     clientSocket.disconnect();
+    clientSocket2.disconnect();
   });
 
   beforeEach(() => {
@@ -91,5 +98,37 @@ describe('Socket.io handlers', () => {
       expect(err.message).toMatch(/Failed/);
       done();
     });
+  });
+
+  it('broadcasts typing event to other clients', (done) => {
+    // clientSocket emits typing; clientSocket2 should receive it
+    clientSocket2.once('typing', (payload) => {
+      expect(payload.sender).toBe('Alice');
+      expect(payload.isTyping).toBe(true);
+      done();
+    });
+
+    clientSocket.emit('typing', { sender: 'Alice', isTyping: true });
+  });
+
+  it('does not broadcast typing event back to the sender', (done) => {
+    // clientSocket should NOT receive its own typing broadcast
+    const timeout = setTimeout(done, 300); // pass if no event within 300ms
+    clientSocket.once('typing', () => {
+      clearTimeout(timeout);
+      done(new Error('Sender should not receive its own typing event'));
+    });
+
+    clientSocket.emit('typing', { sender: 'Alice', isTyping: true });
+  });
+
+  it('ignores typing event with missing sender', (done) => {
+    const timeout = setTimeout(done, 300);
+    clientSocket2.once('typing', () => {
+      clearTimeout(timeout);
+      done(new Error('Should not broadcast typing with empty sender'));
+    });
+
+    clientSocket.emit('typing', { sender: '', isTyping: true });
   });
 });

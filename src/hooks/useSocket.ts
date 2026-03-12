@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs */
 "use client"
 
 import { useEffect, useRef, useState } from "react"
@@ -8,14 +9,17 @@ const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL ?? "http://localhost:8080"
 
 interface UseSocketOptions {
   onMessage: (msg: Message) => void
+  onTyping?: (sender: string, isTyping: boolean) => void
 }
 
-export function useSocket({ onMessage }: UseSocketOptions) {
+export function useSocket({ onMessage, onTyping }: UseSocketOptions) {
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const socketRef = useRef<Socket | null>(null)
   const onMessageRef = useRef(onMessage)
+  const onTypingRef = useRef(onTyping)
   onMessageRef.current = onMessage
+  onTypingRef.current = onTyping
 
   useEffect(() => {
     const socket = io(SOCKET_URL, { autoConnect: true })
@@ -37,6 +41,10 @@ export function useSocket({ onMessage }: UseSocketOptions) {
       onMessageRef.current(msg)
     })
 
+    socket.on("typing", ({ sender, isTyping }: { sender: string; isTyping: boolean }) => {
+      onTypingRef.current?.(sender, isTyping)
+    })
+
     return () => {
       socket.disconnect()
     }
@@ -46,5 +54,9 @@ export function useSocket({ onMessage }: UseSocketOptions) {
     socketRef.current?.emit("sendMessage", { sender, text })
   }
 
-  return { connected, error, sendMessage }
+  const sendTyping = (sender: string, isTyping: boolean) => {
+    socketRef.current?.emit("typing", { sender, isTyping })
+  }
+
+  return { connected, error, sendMessage, sendTyping }
 }

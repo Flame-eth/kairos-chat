@@ -1,6 +1,6 @@
 import { Server, Socket } from 'socket.io';
 import { createMessage } from '../db/repository';
-import { SendMessagePayload } from '../types';
+import { SendMessagePayload, TypingPayload } from '../types';
 
 export function registerSocketHandlers(io: Server, socket: Socket): void {
   socket.on('sendMessage', async (payload: SendMessagePayload) => {
@@ -21,4 +21,14 @@ export function registerSocketHandlers(io: Server, socket: Socket): void {
       socket.emit('error', { message: 'Failed to save message' });
     }
   });
+
+  socket.on('typing', (payload: TypingPayload) => {
+    if (!payload?.sender?.trim()) return;
+    // Broadcast only to OTHER connected clients, not the sender
+    socket.broadcast.emit('typing', {
+      sender: payload.sender.trim(),
+      isTyping: Boolean(payload.isTyping),
+    });
+  });
 }
+

@@ -1,4 +1,4 @@
-import { asc } from 'drizzle-orm';
+import { desc } from 'drizzle-orm';
 import { db } from './client';
 import { messages, Message, NewMessage } from './schema';
 
@@ -9,7 +9,7 @@ export async function getMessages(
   return db
     .select()
     .from(messages)
-    .orderBy(asc(messages.createdAt))
+    .orderBy(desc(messages.createdAt))
     .limit(limit)
     .offset(offset);
 }
