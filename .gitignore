@@ -30,6 +30,11 @@ pnpm-debug.log*
 
 # env files
 .env*.local
+.env
+
+# server build output
+server/dist/
+server/drizzle/
 
 # typescript
 *.tsbuildinfo
