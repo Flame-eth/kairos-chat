@@ -21,6 +21,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const stored = sessionStorage.getItem("kairos_username")
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (stored) setUsernameState(stored)
   }, [])
 
