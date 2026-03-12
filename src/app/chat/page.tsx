@@ -3,15 +3,17 @@
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useUser } from "@/context/UserContext"
-import { LoginForm } from "@/components/LoginForm"
+import { ChatInterface } from "@/components/ChatInterface"
 
-export default function HomePage() {
+export default function ChatPage() {
   const { username } = useUser()
   const router = useRouter()
 
   useEffect(() => {
-    if (username) router.replace("/chat")
+    if (username === null) router.replace("/")
   }, [username, router])
 
-  return <LoginForm />
+  if (!username) return null
+
+  return <ChatInterface />
 }
